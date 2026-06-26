@@ -39,6 +39,13 @@ Evaluated on a **held-out set of 320 prompts** (100 each from three source datas
 
 **Headline:** The base model replied to Hinglish prompts in **100% English** (0.000 Hindi). After fine-tuning, it replies **~75% in Hindi** — a capability that did not exist in the base model.
 
+### Results data
+Raw model responses for the full 320-prompt eval set are in `results/`:
+- `results/base_model_response.json` — base Gemma-2-2B responses (baseline)
+- `results/FineTune_model_responses.json` — fine-tuned model responses
+
+The tables above are computed by comparing these two files on the same prompts.
+
 ### Honest limitations
 
 - **Repetition increased** in 3 of 4 categories (a known side effect of fine-tuning small models on style; mitigated at inference with a repetition penalty).
@@ -49,7 +56,7 @@ Evaluated on a **held-out set of 320 prompts** (100 each from three source datas
 
 ## Approach
 
-### 1. Model selection — `selection-of-model-by-no.of_token.ipynb`
+### 1. Model selection — `selection-of-model-by-no.of_tokens.ipynb`
 Compared tokenizer efficiency across candidate open models (Gemma vs. Qwen vs. Llama) on Hindi text. **Gemma-2-2B tokenized Hindi 2–3× more efficiently** (fewer tokens per sentence), making it the most cost-effective base for Hindi fine-tuning — the basis for choosing it.
 
 ### 2. Data cleaning & preparation — `data-cleaning-dataset1.ipynb`, `dataset2-3.ipynb`
@@ -65,7 +72,7 @@ Compared tokenizer efficiency across candidate open models (Gemma vs. Qwen vs. L
 - Generated and saved **base-model responses first** to establish a true baseline before any training.
 - **LLM-as-judge** pipeline (Gemini) with randomized A/B ordering to mitigate position bias.
 
-### 4. Training (QLoRA)
+### 4. Training (QLoRA)— `training.ipynb`
 - **QLoRA**: 4-bit NF4 quantization + LoRA adapters (**r=16, α=32**, dropout 0.05) on q/k/v/o + gate/up/down projections.
 - **20.7M trainable parameters (0.8%** of the model).
 - bf16 compute, `paged_adamw_8bit`, cosine schedule, lr 2e-4, batch 4 × grad-accum 4, max-len 768.
