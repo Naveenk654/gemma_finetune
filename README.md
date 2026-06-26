@@ -49,27 +49,27 @@ Evaluated on a **held-out set of 320 prompts** (100 each from three source datas
 
 ## Approach
 
-### 1. Data pipeline (`01_data_pipeline.ipynb`)
+### 1. Model selection — `selection-of-model-by-no.of_token.ipynb`
+Compared tokenizer efficiency across candidate open models (Gemma vs. Qwen vs. Llama) on Hindi text. **Gemma-2-2B tokenized Hindi 2–3× more efficiently** (fewer tokens per sentence), making it the most cost-effective base for Hindi fine-tuning — the basis for choosing it.
+
+### 2. Data cleaning & preparation — `data-cleaning-dataset1.ipynb`, `dataset2-3.ipynb`
 - Combined **3 datasets**: `alpaca-cleaned-hindi`, `samvaad-hi-v1`, `ai4bharat/wikihow-hi`.
-- Built **6 unit-tested cleaning filters**: Devanagari-ratio threshold, length bounds, identity/refusal removal, repetition-loop detection, harmful-content filtering (including script-mixed variants).
-- **Per-dataset threshold tuning** — inspected each dataset's distribution independently rather than applying uniform cutoffs (e.g., wikihow needed a higher max-length and repeat threshold).
+- Built **unit-tested cleaning filters**: Devanagari-ratio threshold, length bounds, identity/refusal removal, repetition-loop detection, harmful-content filtering (including script-mixed variants).
+- **Per-dataset threshold tuning** — inspected each dataset's distribution independently rather than applying uniform cutoffs.
 - Extracted **first-turn-only** from the multi-turn `samvaad` data to fit a single-turn instruction format.
 - Final balanced mix: **40% wikihow / 40% samvaad / 20% alpaca** → **11,677 examples**, split 90/5/5 (train/val/test) with verified zero train/test overlap.
 
-### 2. Evaluation harness (`02_evaluation_harness.ipynb`)
-- **320-prompt** eval set (300 by-source + 20 hand-written Hinglish).
+### 3. Evaluation — `dataset-evaluation-alpaca-hindi.ipynb`
+- **320-prompt** held-out eval set (300 by-source + 20 hand-written Hinglish).
 - Automatic metrics: **Hindi-script ratio**, response length, repetition score.
 - Generated and saved **base-model responses first** to establish a true baseline before any training.
 - **LLM-as-judge** pipeline (Gemini) with randomized A/B ordering to mitigate position bias.
 
-### 3. Training (`03_training.ipynb`)
+### 4. Training (QLoRA)
 - **QLoRA**: 4-bit NF4 quantization + LoRA adapters (**r=16, α=32**, dropout 0.05) on q/k/v/o + gate/up/down projections.
 - **20.7M trainable parameters (0.8%** of the model).
 - bf16 compute, `paged_adamw_8bit`, cosine schedule, lr 2e-4, batch 4 × grad-accum 4, max-len 768.
 - **Validation-loss early stopping**: monitored eval loss every 200 steps; it bottomed at **step 1200 (eval_loss 1.516)** then rose as training loss kept falling (classic overfitting). Selected the step-1200 checkpoint rather than the final one.
-
-### 4. Results analysis (`04_results_analysis.ipynb`)
-- Computed the before/after tables above from `results/base_results.json` and `results/ft_results.json`.
 
 ---
 
@@ -78,33 +78,11 @@ Evaluated on a **held-out set of 320 prompts** (100 each from three source datas
 A few non-obvious issues solved during the project:
 
 - **Gemma2 generation bug:** gradient checkpointing forces `use_cache=False`, which breaks Gemma2's attention during generation and produces degenerate, repeating-token output. Fix: before inference, set `model.config.use_cache=True`, `model.gradient_checkpointing_disable()`, `model.eval()`.
-- **Hardware precision:** Gemma's internal activations can exceed float16's max (65504); the T4 (float16-only) produced corrupted output. Training on bf16-capable hardware (A40) resolved it.
+- **Hardware precision:** Gemma's internal activations can exceed float16's max (65504); float16-only GPUs (e.g. T4) produced corrupted output. Training on bf16-capable hardware (A40) resolved it.
 - **Artifact discipline:** backed up the best checkpoint before `save_total_limit` rotation could delete it.
 
 ---
 
-## Repository structure
-gemma_finetune/
-
-├── README.md
-
-├── 01_data_pipeline.ipynb        # cleaning, filtering, dataset mixing
-
-├── 02_evaluation_harness.ipynb   # eval set + metrics + LLM-judge
-
-├── 03_training.ipynb             # QLoRA training (bf16)
-
-├── 04_results_analysis.ipynb     # before/after comparison
-
-├── app.py                        # Gradio demo (Hugging Face Spaces)
-
-├── requirements.txt
-
-└── results/
-
-├── base_results.json
-
-└── ft_results.json
 ## Tech stack
 
 Python · PyTorch · Hugging Face Transformers / PEFT / TRL · bitsandbytes · QLoRA · Gradio
