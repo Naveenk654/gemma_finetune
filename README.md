@@ -1,55 +1,120 @@
-# Gemma-2-2B Hindi Instruct 🇮🇳
+# Hindi/Hinglish Instruction Fine-tuning of Gemma-2-2B (QLoRA)
 
-Fine-tuning Google Gemma-2-2B-IT for Hindi and Hinglish instruction following using QLoRA.
+Fine-tuning [google/gemma-2-2b-it](https://huggingface.co/google/gemma-2-2b-it) to respond **consistently in Hindi/Hinglish**, with a rigorous before/after evaluation.
 
-**Status:** Week 1 complete (June 2026) — dataset selection and methodology locked.
+🔗 **[Live Demo](https://huggingface.co/spaces/naveenk879/gemma-hindi-demo)** · **[Fine-tuned Model](https://huggingface.co/naveenk879/gemma-2-2b-hindi-merged)** · **[LoRA Adapter](https://huggingface.co/naveenk879/gemma-2-2b-hindi-lora)**
 
-## Project goal
-Build a small, open-source language model that responds fluently in Hindi/Hinglish to Hindi/Hinglish instructions. The base Gemma model understands Hindi but defaults to English responses; this project closes that gap.
+---
 
-## Approach summary
-- **Base model:** `google/gemma-2-2b-it` (chosen via empirical tokenizer comparison)
-- **Method:** QLoRA (4-bit quantization + LoRA adapters)
-- **Compute:** Kaggle T4 x2 (free tier)
-- **Evaluation:** LLM-as-judge on held-out prompts across 6 task categories
+## Problem
 
-## Progress
+Open small models like Gemma-2-2B can read Hindi, but respond **inconsistently** — they frequently default to English, especially when prompted in **Hinglish** (romanized Hindi). For an Indian-market assistant, this is a real failure: a user writing `"yaar mujhe ek movie suggest karo"` expects a Hindi reply, not English.
 
-### ✅ Week 1: Foundations + Dataset Selection
-- Empirical tokenizer comparison across Qwen, Gemma, and Llama for Hindi
-- Manually scored 75 random samples across 3 candidate Hindi instruction datasets
-- Identified 11 distinct failure modes; designed filtering strategy for each
-- Locked final training mix: ai4bharat wikihow + samvaad-hi-v1 + filtered alpaca-hindi
+**Goal:** Use parameter-efficient fine-tuning (QLoRA) to make the model reply in Hindi/Hinglish reliably — and *measure* the improvement properly, rather than just eyeballing a few outputs.
 
-### 🔜 Week 2: Data Cleaning Pipeline (in progress)
+> **Scope note (honest framing):** This project targets **language consistency**, not factual quality. As a 2B model, it has limited world knowledge and will hallucinate facts — an expected limitation of model size, separate from the language-consistency objective.
 
-### Upcoming
-- Week 3: Evaluation harness + baseline
-- Week 4-5: First training runs + iteration
-- Week 6: Ablation experiments
-- Week 7: Final model + Gradio demo
-- Week 8: Documentation + blog post
+---
 
-## Why Gemma (not Llama or Qwen)
-Empirical tokenizer efficiency comparison on Hindi text:
+## Results
 
-| Hindi sentence | Qwen tokens | Gemma tokens | Llama tokens |
-|---------------|-------------|--------------|--------------|
-| भारत एक विशाल देश है... | 54 | **17** | 27 |
-| मुझे आज का मौसम बताओ | 19 | **8** | 11 |
-| किसान को फसल बोने से पहले... | 45 | **20** | 28 |
+Evaluated on a **held-out set of 320 prompts** (100 each from three source datasets by category + 20 hand-written Hinglish prompts), comparing the base model vs. the fine-tuned model on the same prompts.
 
-Gemma uses 2-3× fewer tokens for Hindi by using meaningful Devanagari subwords; Qwen and Llama fall back to UTF-8 byte fragments. Better tokenization → more efficient learning during fine-tuning.
+### Hindi-script consistency (fraction of response in Devanagari)
 
-## Repo structure (in progress)
-\`\`\`
-.
-├── notebooks/
-│   └── 01_dataset_evaluation.ipynb   # Week 1: Tokenizer comparison + dataset quality scoring
-├── data/                              # Cleaned data (Week 2)
-├── src/                               # Training scripts (Week 4+)
-└── README.md
-\`\`\`
+| Category      | Base  | Fine-tuned | Change   |
+|---------------|-------|------------|----------|
+| wikihow-hi    | 0.500 | 0.716      | **+0.216** |
+| samvaad-hi    | 0.442 | 0.741      | **+0.299** |
+| alpaca-hindi  | 0.290 | 0.753      | **+0.463** |
+| **hinglish**  | **0.000** | **0.752** | **+0.752** |
+| **Overall**   | **0.385** | **0.738** | **+0.353** |
+
+### Response-level summary
+
+| Metric                              | Base | Fine-tuned |
+|-------------------------------------|------|------------|
+| Responses mostly Hindi (>50%)       | 52%  | **97%**    |
+| Responses mostly English (<30%)     | 46%  | **1%**     |
+
+**Headline:** The base model replied to Hinglish prompts in **100% English** (0.000 Hindi). After fine-tuning, it replies **~75% in Hindi** — a capability that did not exist in the base model.
+
+### Honest limitations
+
+- **Repetition increased** in 3 of 4 categories (a known side effect of fine-tuning small models on style; mitigated at inference with a repetition penalty).
+- **Factual quality is limited** by the 2B base model (hallucinations) — not the target of this work.
+- **LLM-as-judge** was built (Gemini, with position-bias mitigation) but full-scale judging was constrained by free-tier API rate limits; a sample directionally favored the fine-tuned model. The automatic metrics above are the primary quantitative evidence.
+
+---
+
+## Approach
+
+### 1. Data pipeline (`01_data_pipeline.ipynb`)
+- Combined **3 datasets**: `alpaca-cleaned-hindi`, `samvaad-hi-v1`, `ai4bharat/wikihow-hi`.
+- Built **6 unit-tested cleaning filters**: Devanagari-ratio threshold, length bounds, identity/refusal removal, repetition-loop detection, harmful-content filtering (including script-mixed variants).
+- **Per-dataset threshold tuning** — inspected each dataset's distribution independently rather than applying uniform cutoffs (e.g., wikihow needed a higher max-length and repeat threshold).
+- Extracted **first-turn-only** from the multi-turn `samvaad` data to fit a single-turn instruction format.
+- Final balanced mix: **40% wikihow / 40% samvaad / 20% alpaca** → **11,677 examples**, split 90/5/5 (train/val/test) with verified zero train/test overlap.
+
+### 2. Evaluation harness (`02_evaluation_harness.ipynb`)
+- **320-prompt** eval set (300 by-source + 20 hand-written Hinglish).
+- Automatic metrics: **Hindi-script ratio**, response length, repetition score.
+- Generated and saved **base-model responses first** to establish a true baseline before any training.
+- **LLM-as-judge** pipeline (Gemini) with randomized A/B ordering to mitigate position bias.
+
+### 3. Training (`03_training.ipynb`)
+- **QLoRA**: 4-bit NF4 quantization + LoRA adapters (**r=16, α=32**, dropout 0.05) on q/k/v/o + gate/up/down projections.
+- **20.7M trainable parameters (0.8%** of the model).
+- bf16 compute, `paged_adamw_8bit`, cosine schedule, lr 2e-4, batch 4 × grad-accum 4, max-len 768.
+- **Validation-loss early stopping**: monitored eval loss every 200 steps; it bottomed at **step 1200 (eval_loss 1.516)** then rose as training loss kept falling (classic overfitting). Selected the step-1200 checkpoint rather than the final one.
+
+### 4. Results analysis (`04_results_analysis.ipynb`)
+- Computed the before/after tables above from `results/base_results.json` and `results/ft_results.json`.
+
+---
+
+## Engineering notes
+
+A few non-obvious issues solved during the project:
+
+- **Gemma2 generation bug:** gradient checkpointing forces `use_cache=False`, which breaks Gemma2's attention during generation and produces degenerate, repeating-token output. Fix: before inference, set `model.config.use_cache=True`, `model.gradient_checkpointing_disable()`, `model.eval()`.
+- **Hardware precision:** Gemma's internal activations can exceed float16's max (65504); the T4 (float16-only) produced corrupted output. Training on bf16-capable hardware (A40) resolved it.
+- **Artifact discipline:** backed up the best checkpoint before `save_total_limit` rotation could delete it.
+
+---
+
+## Repository structure
+gemma_finetune/
+
+├── README.md
+
+├── 01_data_pipeline.ipynb        # cleaning, filtering, dataset mixing
+
+├── 02_evaluation_harness.ipynb   # eval set + metrics + LLM-judge
+
+├── 03_training.ipynb             # QLoRA training (bf16)
+
+├── 04_results_analysis.ipynb     # before/after comparison
+
+├── app.py                        # Gradio demo (Hugging Face Spaces)
+
+├── requirements.txt
+
+└── results/
+
+├── base_results.json
+
+└── ft_results.json
+## Tech stack
+
+Python · PyTorch · Hugging Face Transformers / PEFT / TRL · bitsandbytes · QLoRA · Gradio
+
+## Model
+
+- **Adapter:** [`naveenk879/gemma-2-2b-hindi-lora`](https://huggingface.co/naveenk879/gemma-2-2b-hindi-lora)
+- **Merged model:** [`naveenk879/gemma-2-2b-hindi-merged`](https://huggingface.co/naveenk879/gemma-2-2b-hindi-merged)
+- **Base:** [`google/gemma-2-2b-it`](https://huggingface.co/google/gemma-2-2b-it)
 
 ## License
-Apache-2.0 (matching base model)
+
+The fine-tuned weights inherit the [Gemma license](https://ai.google.dev/gemma/terms). Code in this repository is released under the MIT License.
